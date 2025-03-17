@@ -1,0 +1,90 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://raw.githubusercontent.com///nextflow_schema.json",
+    "title": " pipeline parameters",
+    "description": "",
+    "type": "object",
+    "$defs": {
+        "input_output": {
+            "title": "Input/output",
+            "type": "object",
+            "description": "",
+            "default": "",
+            "properties": {
+                "sampleSheet": {
+                    "type": "string",
+                    "pattern": "^*.csv$",
+                    "format": "file-path",
+                    "fa_icon": "fas fa-file-csv",
+                    "description": "Path to sample sheet, comprising Sample_Name <str> [Required], Path <vcf.gz files> [Required] and Description <str> [Optional] columns. [Required]"
+                },
+                "outputDir": {
+                    "type": "string",
+                    "fa_icon": "fas fa-folder-open",
+                    "format": "directory-path",
+                    "description": "Output directory [Required]"
+                }
+            },
+            "required": [
+                "sampleSheet",
+                "outputDir"
+            ]
+        },
+        "annotations": {
+            "title": "Annotations",
+            "type": "object",
+            "description": "",
+            "default": "",
+            "properties": {
+                "clinvarAnnotations": {
+                    "type": "string",
+                    "fa_icon": "fas fa-file-archive",
+                    "pattern": "^*.vcf.gz$",
+                    "format": "file-path",
+                    "description": "Path to ClinVar annotation vcf file [Required]"
+                },
+                "pathogenicityLevel": {
+                    "type": "string",
+                    "fa_icon": "fas fa-ad",
+                    "enum": [
+                        "Benign",
+                        "Likely benign",
+                        "Uncertain significance",
+                        "Likely pathogenic",
+                        "Pathogenic"
+                    ],
+                    "description": "Expected pathogenicity level [Required]",
+                    "default": "Pathogenic"
+                }
+            },
+            "required": [
+                "clinvarAnnotations", 
+                "pathogenicityLevel"
+            ]
+        },
+        "secrets": {
+            "title": "Secrets",
+            "type": "object",
+            "description": "",
+            "default": "",
+            "properties": {
+                "chatgptApiKey": {
+                    "type": "string",
+                    "fa_icon": "fas fa-key",
+                    "description": "API key [OPTIONAL]"
+                }
+            }
+        }
+    },
+    "allOf": [
+        {
+            "$ref": "#/$defs/input_output"
+        },
+        {
+            "$ref": "#/$defs/annotations"
+        },
+        {
+            "$ref": "#/$defs/secrets"
+        }
+    ]
+}

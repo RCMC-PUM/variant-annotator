@@ -1,3 +1,9 @@
+# NExtflow
+work/
+test/
+.nextflow/
+.nextflow.log*
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
