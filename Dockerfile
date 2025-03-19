@@ -19,7 +19,7 @@ RUN ln -sf /usr/bin/python3.12 /usr/bin/python
 WORKDIR /app
 
 # Copy
-COPY . .
+COPY bin poetry.lock pyproject.toml .
 
 # Install dependencies
 RUN python -m pip install --break-system-package --no-cache-dir poetry poetry-plugin-export
@@ -27,7 +27,7 @@ RUN python -m poetry export --without-hashes --format=requirements.txt -o requir
 RUN python -m pip install --break-system-package -r requirements.txt
 
 # Change mode of bin files
-RUN chmod +x bin/*.py
+# RUN chmod +x bin/*.py
 
 # Set the default command
 CMD ["/bin/bash"]

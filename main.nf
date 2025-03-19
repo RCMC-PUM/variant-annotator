@@ -1,46 +1,79 @@
-
 include { validateParameters } from 'plugin/nf-schema'
 
 params.sampleSheet = ''  // Path to the sample sheet
 params.clinvarAnnotations = '' // Path to ClinVar VCF file
 params.pathogenicityLevel = 'Pathogenic'  // User-defined pathogenicity filter
 params.outputDir = '' // Path to output directory 
-params.chatgptApiKey = ''// API key [temporary solution, move to secrets]
+params.model_configuration = ''// Path to model configuration file
+
+
+process INDEX_ANNOTS {
+    input:
+    path annots
+
+    output:
+    tuple file(annots), file("${annots.name}.tbi")
+
+    script:
+    """
+    bcftools index -t $annots
+    """
+}
+
+
+process FILTER_PASSING_VARIANTS {
+    input:
+    tuple val(sample), file(vcf), val(caller), val(clinical_description)
+
+    output:
+    publishDir "$params.outputDir/samples/$sample/raw", mode: 'copy', overwrite: true, pattern: '*.pass.vcf.gz'
+    tuple val(sample), file("${vcf.getSimpleName()}.${caller}.pass.vcf.gz"), val(caller), val(clinical_description)
+
+    script:
+    """
+    if [[ "$caller" == "ploidy" ]]; then
+        bcftools view -O z -o "${vcf.getSimpleName()}.${caller}.pass.vcf.gz" $vcf 
+    else
+        bcftools view -i 'FILTER=="PASS"' -O z -o "${vcf.getSimpleName()}.${caller}.pass.vcf.gz" $vcf 
+    fi
+    """
+
+
+}
 
 
 process ANNOTATE_VCF {
     input:
-    tuple val(sample), file(vcf)
-    path annots
+    tuple val(sample), file(vcf), val(caller), val(clinical_description)
+    tuple file(annots), file(annots_index)
 
     output:
-    publishDir "$params.outputDir/samples/$sample/annotated_raw", mode: 'copy', overwrite: true, pattern: '*annot.vcf.gz'
-    publishDir "$params.outputDir/samples/$sample/annotated_raw", mode: 'copy', overwrite: true, pattern: '*annot.vcf.gz.tbi'
-    tuple val(sample), file("${vcf.name.replace('.vcf.gz', '.annot.vcf.gz')}")
+    publishDir "$params.outputDir/samples/$sample/annotated_raw", mode: 'copy', overwrite: true, pattern: '*.pass.annot.vcf.gz'
+    tuple val(sample),file("${vcf.getSimpleName()}.${caller}.pass.annot.vcf.gz"), val(caller), val(clinical_description)
 
     script:
     """
-    bcftools index -t $vcf 
-    bcftools index -t $annots
-
-    bcftools annotate -a $annots -c CHROM,POS,REF,ALT,INFO -O z -o "${vcf.name.replace('.vcf.gz', '.annot.vcf.gz')}" $vcf
+    bcftools index -t $vcf
+    bcftools annotate -a $annots -c CHROM,POS,REF,ALT,INFO -O z -o "${vcf.getSimpleName()}.${caller}.pass.annot.vcf.gz" $vcf
     """
 }
 
 
 process FILTER_VCF {
-
     input:
-    tuple val(sample), file(annotated_vcf)
+    tuple val(sample), file(vcf), val(caller), val(clinical_description)
 
     output:
-    publishDir "$params.outputDir/samples/$sample/annotated_filtered", mode: 'copy', overwrite: true, pattern: '*annot.filtered.vcf.gz'
-    publishDir "$params.outputDir/samples/$sample/annotated_filtered", mode: 'copy', overwrite: true, pattern: '*annot.filtered.vcf.gz.tbi'
-    tuple val(sample), file("${annotated_vcf.name.replace('.annot.vcf.gz', '.annot.filtered.vcf.gz')}")
+    publishDir "$params.outputDir/samples/$sample/annotated_filtered", mode: 'copy', overwrite: true, pattern: '*.filtered.pass.annot.vcf.gz'
+    tuple val(sample), file("${vcf.getSimpleName()}.${caller}.filtered.pass.annot.vcf.gz"), val(caller), val(clinical_description)
 
     script:
     """
-    bcftools view -i 'INFO/CLNSIG="${params.pathogenicityLevel}"' -O z -o "${annotated_vcf.name.replace('.annot.vcf.gz', '.annot.filtered.vcf.gz')}" $annotated_vcf
+    if [[ "$caller" == "ploidy" ]]; then
+        bcftools filter -i 'NDC>1.1 || NDC<0.9' -O z -o "${vcf.getSimpleName()}.${caller}.filtered.pass.annot.vcf.gz" $vcf
+    else
+        bcftools filter -i 'INFO/CLNSIG="${params.pathogenicityLevel}"' -O z -o "${vcf.getSimpleName()}.${caller}.filtered.pass.annot.vcf.gz" $vcf
+    fi
     """
 
 }
@@ -48,97 +81,101 @@ process FILTER_VCF {
 
 process EXPORT_VARIANT_TABLE {
     input:
-    tuple val(sample), file(filtered_vcf)
+    tuple val(sample), file(vcf), val(caller), val(clinical_description)
 
     output:
-    publishDir "$params.outputDir/samples/$sample", mode: 'copy', overwrite: true, pattern: '*tsv'
-    tuple val(sample), file("${filtered_vcf.name.replace('.annot.filtered.vcf.gz', '.annot.filtered.tsv')}")
-
+    publishDir "$params.outputDir/samples/$sample/final_variant_tables", mode: 'copy', overwrite: true, pattern: '*tsv'
+    tuple val(sample), file("${vcf.getSimpleName()}.${caller}.tsv"), val(caller), val(clinical_description)
+    
     script:
     """
+    if [[ "$caller" == "sv" ]]; then
+        f_query="%CHROM\t%POS\t%REF\t%ALT\t[%SVTYPE]\t[%BND_DEPTH]\t[%GQ]\t[%GT]\t[%ALLELEID]\t[%CLNDISDB]\t[%CLNREVSTAT]\t[%CLNSIG]\t[%CLNVC]\t[%CLNDN]\n"
+        f_cols="CHROM\tPOS\tREF\tALT\tSVTYPE\tBND_DEPTH\tGQ\tGT\tALLELEID\tCLNDISDB\tCLNREVSTAT\tCLNSIG\tCLNVC\tCLNDN"
 
-    if [[ "$filtered_vcf" == *sv* ]]; then
-        f_query="%CHROM\t%POS\t%ID\t%REF\t%ALT\t%INFO\n"
+    elif [[ "$caller" == "cnv" ]]; then
+        f_query="%CHROM\t%POS\t%REF\t%ALT\t[%GT]\t[%SM]\t[%CN]\t[%ALLELEID]\t[%CLNDISDB]\t[%CLNREVSTAT]\t[%CLNSIG]\t[%CLNVC]\t[%CLNDN]\n"
+        f_cols="CHROM\tPOS\tREF\tALT\tGT\tSM\tCN\tALLELEID\tCLNDISDB\tCLNREVSTAT\tCLNSIG\tCLNVC\tCLNDN"
 
-    elif [[ "$filtered_vcf" == *cnv* ]]; then
-        f_query="%CHROM\t%POS\t%ID\t%INFO\t%FORMAT/CN\n"
+    elif [[ "$caller" == "repeats" ]]; then
+        f_query="%CHROM\t%POS\t%REF\t%ALT\t[%VARID]\t[%GT]\t[%SO]\t[%REPCN]\t[%REPCI]\t[%ADSP]\t[%ADFL]\t[%ADIR]\t[%ALLELEID]\t[%CLNDISDB]\t[%CLNREVSTAT]\t[%CLNSIG]\t[%CLNVC]\t[%CLNDN]\n"
+        f_cols="CHROM\tPOS\tREF\tALT\tVARID\tGT\tSO\tREPCN\tREPCI\tADSP\tADFL\tADIR\tALLELEID\tCLNDISDB\tCLNREVSTAT\tCLNSIG\tCLNVC\tCLNDN"
 
-    elif [[ "$filtered_vcf" == *repeats* ]]; then
-        f_query="%CHROM\t%POS\t%INFO\n"
-
-    elif [[ "$filtered_vcf" == *ploidy* ]]; then
-        f_query="%CHROM\t%POS\t%INFO/END\t%FORMAT/DC\t%FORMAT/NDC\n"
+    elif [[ "$caller" == "ploidy" ]]; then
+        f_query="%CHROM\t%QUAL\t%FILTER\t[%DC]\t[%NDC]\n"
+        f_cols="CHROM\tQUAL\tFILTER\tDC\tNDC"
 
     else
-        f_query="%CHROM\t%POS\t%INFO/ALLELEID\t[%GT]\t%INFO\n"
+        f_query="%CHROM\t%POS\t%REF\t%ALT\t%QUAL\t[%AC]\t[%AF]\t[%AN]\t[%DP]\t[%FractionInformativeReads]\t[%GQ]\t[%GT]\t[%ALLELEID]\t[%CLNDISDB]\t[%CLNREVSTAT]\t[%CLNSIG]\t[%CLNVC]\t[%CLNDN]\n"
+        f_cols="CHROM\tPOS\tREF\tALT\tQUAL\tAC\tAF\tAN\tDP\tFractionInformativeReads\tGQ\tGT\tALLELEID\tCLNDISDB\tCLNREVSTAT\tCLNSIG\tCLNVC\tCLNDN"
 
     fi
 
-    bcftools query -f "\$f_query" $filtered_vcf > "${filtered_vcf.name.replace('.annot.filtered.vcf.gz', '.annot.filtered.tsv')}"
-
+    echo -e "\$f_cols" > "${vcf.getSimpleName()}.${caller}.tsv"
+    bcftools query -f "\$f_query" $vcf >> "${vcf.getSimpleName()}.${caller}.tsv"
     """
 }
 
 
 process INTERPRET_VARIANTS {
     input:
-    tuple val(sample), file(filtered_tsv)
-    val api_key
+    tuple val(sample), file(tsv), val(caller), val(clinical_description)
+    val model_config
 
     output:
-    publishDir "$params.outputDir/samples/$sample", mode: 'copy', overwrite: true, pattern: '*interpreted.txt'
-    tuple val(sample), file("${filtered_tsv.baseName}.interpreted.txt"), optional: true
+    publishDir "$params.outputDir/samples/$sample/interpretation", mode: 'copy', overwrite: true, pattern: '*.json'
+    tuple val(sample), file("*.json")
 
     script:
     """
-    #!/usr/bin/env python3
+    interpret.py $tsv $caller "${clinical_description ?: ''}" $model_config
+    """
+}
 
-    import pandas as pd
-    from openai import OpenAI
-    import json
 
-    client = OpenAI(api_key="${api_key}")
+process CREATE_REPORTS {
+    input:
+    tuple val(sample), file(json_files)
 
-    # Load the TSV file
-    try:
-        df = pd.read_csv("${filtered_tsv}", sep="\t", header=None)
+    output:
+    publishDir "$params.outputDir/samples/$sample", mode: 'copy', overwrite: true, pattern: '*.html'
+    file "*.html"
 
-        # Prepare variant descriptions for analysis
-        variants = df.to_dict(orient='records')
-        
-        prompt = f"Given the following variant data, prioritize the variants based on pathogenicity. If genotype information is available, include it in the analysis. Order the variants from most to least significant and suggest validation methods if necessary: {json.dumps(variants, indent=2)}"
-        response = client.responses.create(
-            model="gpt-4o-mini",
-            instructions="You are a geneticist specializing in rare diseases.",
-            input=prompt,
-            )
-        
-        interpretation = response.output_text
-        with open("${filtered_tsv.baseName}.interpreted.txt", "w") as handle:
-            handle.write(interpretation)
-        
-    except pd.errors.EmptyDataError:
-        print("No variants")
-    
+    script:
+    """
+    reports.py $sample ${json_files.join(' ')}
     """
 }
 
 workflow {
-
     validateParameters()
 
     sampleSheet = file(params.sampleSheet)
     annots = file(params.clinvarAnnotations)
 
     // Create the channel for samples from the CSV sample sheet file
-    samples = Channel.fromPath(sampleSheet).splitCsv(header: true, sep: ",").map { row -> tuple(row.Sample_Name, file(row.Path) ) }
-    
+    samples = Channel.fromPath(sampleSheet).splitCsv(header: true, sep: ",").map { row -> tuple(row.Sample_Name, file(row.Path), row.Caller, row.Clinical_description ) }
+
     // Run the annotation process and wait until all annotated VCF files are available
+    annots = INDEX_ANNOTS(annots)
+    samples = FILTER_PASSING_VARIANTS(samples)
     annotated_vcf = ANNOTATE_VCF(samples, annots)
 
     // Filter annotated VCF files according to provided pathogenicity level
     filtered_vcf = FILTER_VCF(annotated_vcf)
 
+    // Export selected variant tables
     variant_tables = EXPORT_VARIANT_TABLE(filtered_vcf)
-    INTERPRET_VARIANTS(variant_tables, params.chatgptApiKey)
+
+    // LLM
+    model_configuration = file(params.model_configuration)
+    reports = INTERPRET_VARIANTS(variant_tables, model_configuration)
+
+    // Export reports
+    results = channel
+    .fromPath("$params.outputDir/samples/*/interpretation/*.json", type: 'file')
+    .map { file -> tuple(file.parent.parent.name, file) }
+    .groupTuple()
+
+    CREATE_REPORTS(results)
 }

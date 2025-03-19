@@ -16,13 +16,13 @@
                     "pattern": "^*.csv$",
                     "format": "file-path",
                     "fa_icon": "fas fa-file-csv",
-                    "description": "Path to sample sheet, comprising Sample_Name <str> [Required], Path <vcf.gz files> [Required] and Description <str> [Optional] columns. [Required]"
+                    "description": "Path to sample sheet [REQUIRED]"
                 },
                 "outputDir": {
                     "type": "string",
                     "fa_icon": "fas fa-folder-open",
                     "format": "directory-path",
-                    "description": "Output directory [Required]"
+                    "description": "Output directory [REQUIRED]"
                 }
             },
             "required": [
@@ -41,37 +41,34 @@
                     "fa_icon": "fas fa-file-archive",
                     "pattern": "^*.vcf.gz$",
                     "format": "file-path",
-                    "description": "Path to ClinVar annotation vcf file [Required]"
+                    "description": "Path to ClinVar annotation vcf.gz file [REQUIRED]"
                 },
                 "pathogenicityLevel": {
                     "type": "string",
                     "fa_icon": "fas fa-ad",
                     "enum": [
-                        "Benign",
-                        "Likely benign",
-                        "Uncertain significance",
                         "Likely pathogenic",
                         "Pathogenic"
                     ],
-                    "description": "Expected pathogenicity level [Required]",
+                    "description": "Expected pathogenicity level [REQUIRED]",
                     "default": "Pathogenic"
                 }
             },
             "required": [
-                "clinvarAnnotations", 
+                "clinvarAnnotations",
                 "pathogenicityLevel"
             ]
         },
-        "secrets": {
-            "title": "Secrets",
+        "model_configuration": {
+            "title": "Model configuration",
             "type": "object",
             "description": "",
             "default": "",
             "properties": {
-                "chatgptApiKey": {
+                "model_config": {
                     "type": "string",
                     "fa_icon": "fas fa-key",
-                    "description": "API key [OPTIONAL]"
+                    "description": "model configuration file [JSON] [OPTIONAL]"
                 }
             }
         }
@@ -84,7 +81,7 @@
             "$ref": "#/$defs/annotations"
         },
         {
-            "$ref": "#/$defs/secrets"
+            "$ref": "#/$defs/model_configuration"
         }
     ]
 }
