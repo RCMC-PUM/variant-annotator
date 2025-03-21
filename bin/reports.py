@@ -26,12 +26,34 @@ def clean_name(name):
     return name.strip().replace("_", "")
 
 
+def constrain(text, n = 25):
+    if len(text) > n:
+        text = text[:n]
+        text += "..."
+    return text
+
+
 def load_data(path):
     reader = vcfpy.Reader.from_path(path)
     parsed = defaultdict(dict)
 
     for cnt, record in enumerate(reader):
         info = {a: clean_value(b) for a, b in record.INFO.items()}
+        
+        pos = f"{record.CHROM}:{record.POS}"
+        ref = constrain(record.REF)
+        alt = " | ".join([f"{constrain(alt.value)} [{alt.type}]" for alt in record.ALT])
+
+        gt = record.calls[0].__dict__["data"].get("GT", "")
+        rs = " | ".join([f"rs{rs}" for rs in record.INFO.get("RS", [])])
+        
+        parsed[cnt].update({"VARIANT": {"POS": pos, 
+                                        "REF": ref, 
+                                        "ALT": alt, 
+                                        "GT": gt, 
+                                        "RS ID": rs}
+                           })
+        
         parsed[cnt].update({"INFO": info})
         parsed[cnt].update({"Calls": record.calls[0].__dict__["data"]})
 
@@ -67,19 +89,25 @@ def main():
 
     callers = sys.argv[2].split(",")
     files = sys.argv[3].split(",")
+    clinical_annotation =  sys.argv[4]
 
-    workflow_params = load_json(sys.argv[4])
-    annots_params = load_json(sys.argv[5])
+    workflow_params = load_json(sys.argv[5])
+    annots_params = load_json(sys.argv[6])
 
-    template = sys.argv[6]
+    template = sys.argv[7]
     
     report_data = {"sample_name": sample,
                    "date": datetime.today().strftime('%Y-%m-%d'),
                    "workflow": workflow_params,
                    "annots": annots_params,
-                   "variants": {}}
-
-    for caller, file in zip(callers, files):
+                   "clinical_annots": clinical_annotation,
+                   "variants": {}, 
+                  }
+    
+    zipped = dict(zip(callers, files))
+    zipped_sorted = {k: zipped[k] for k in ["small_variant", "cnv", "repeats", "sv", "ploidy"]}
+    
+    for caller, file in zipped_sorted.items():
         data = load_data(file)
         report_data["variants"][caller] = data
 

@@ -6,12 +6,16 @@ params.clinvarAnnotations = '' // Path to ClinVar VCF file
 params.pathogenicityLevel = 'Pathogenic'  // User-defined pathogenicity filter
 params.outputDir = '' // Path to output directory 
 
+// Notation conversion 
+params.rename_annot_chrom = true // if true convert '1' to 'chr1' in annotation file
+
 // NDC params
 params.ndc_max = 1.1
 params.ndc_min = 0.9
 
 // HTML templates
 params.template = 'templates/report.html'
+
 
 process SAVE_PARAMS {
     output:
@@ -33,6 +37,26 @@ process INDEX_ANNOTS {
     script:
     """
     bcftools index -t $annots
+    """
+}
+
+
+process RENAME_CHR {
+    input:
+    tuple file(annots), file(index)
+
+    output:
+    tuple file("clinvar_chr_renamed.vcf.gz"), file("clinvar_chr_renamed.vcf.gz.tbi")
+
+    script:
+    """
+
+    for i in {1..22} X Y MT; do
+        echo "\$i chr\$i" >> chr_name_conv.txt
+    done
+
+    bcftools annotate --rename-chrs chr_name_conv.txt $annots | bgzip > clinvar_chr_renamed.vcf.gz
+    bcftools index -t clinvar_chr_renamed.vcf.gz
     """
 }
 
@@ -111,16 +135,15 @@ process FILTER_VCF {
     if [[ "$caller" == "ploidy" ]]; then
         bcftools filter -i 'NDC>=${params.ndc_max} || NDC<=${params.ndc_min}' -O z -o "${vcf.getSimpleName()}.${caller}.filtered.pass.annot.vcf.gz" $vcf
     else
-        bcftools filter -i 'INFO/CLNSIG="${params.pathogenicityLevel}"' -O z -o "${vcf.getSimpleName()}.${caller}.filtered.pass.annot.vcf.gz" $vcf
+        bcftools filter -i 'INFO/CLNSIG="${params.pathogenicityLevel}" && ALT!="."' -O z -o "${vcf.getSimpleName()}.${caller}.filtered.pass.annot.vcf.gz" $vcf
     fi
     """
-
 }
 
 
 process CREATE_REPORTS {
     input:
-    tuple val(sample), val(callers), file(vcf_files)
+    tuple val(sample), file(vcf_files), val(callers), val(clinical_description)
     file workflow_params
     file annots_params
     file template
@@ -131,9 +154,10 @@ process CREATE_REPORTS {
 
     script:
     """
-    reports.py $sample ${callers.join(',')} ${vcf_files.join(',')} $workflow_params $annots_params $template
+    reports.py $sample ${callers.join(',')} ${vcf_files.join(',')} "No data" $workflow_params $annots_params $template
     """
 }
+
 
 workflow {
     validateParameters()
@@ -141,11 +165,15 @@ workflow {
 
     sampleSheet = file(params.sampleSheet)
     annots = file(params.clinvarAnnotations)
+    annots = INDEX_ANNOTS(annots)
 
+    if (params.rename_annot_chrom){
+        annots = RENAME_CHR(annots)
+    }
+    
     // Create the channel for samples from the CSV sample sheet file
     samples = Channel.fromPath(sampleSheet).splitCsv(header: true, sep: ",").map { row -> tuple(row.Sample_Name, file(row.Path), row.Caller, row.Clinical_description ) }
 
-    annots = INDEX_ANNOTS(annots)
     annots_params_exported = SAVE_ANNOTS_PARAMS(annots)
 
     // Run the annotation process
@@ -155,12 +183,11 @@ workflow {
     // Filter annotated VCF files according to provided pathogenicity level
     filtered_vcf = FILTER_VCF(annotated_vcf)
 
-    // Export reports
-    results = channel
-    .fromPath("$params.outputDir/samples/*/annotated_filtered/*.vcf.gz", type: 'file')
-    .map { file -> tuple(file.parent.parent.name, file.name.split("\\.")[1] ,file) }
+    // Group annotated files per sample
+    results = filtered_vcf
     .groupTuple()
 
+    // Export reports
     template = file(params.template)
     CREATE_REPORTS(results, params_exported, annots_params_exported, template)
 }

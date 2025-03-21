@@ -9,6 +9,7 @@ RUN apt-get update && \
         wget \
         curl \
         bcftools \
+        tabix \ 
         python3.12 \
         python3.12-venv \
         python3-pip && \
@@ -27,7 +28,8 @@ RUN python -m poetry export --without-hashes --format=requirements.txt -o requir
 RUN python -m pip install --break-system-package -r requirements.txt
 
 # Change mode of bin files
-# RUN chmod +x bin/*.py
+COPY bin/*.py bin/*.py
+RUN chmod +x bin/*.py
 
 # Set the default command
 CMD ["/bin/bash"]
